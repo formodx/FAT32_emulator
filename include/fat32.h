@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <iconv.h>
+#include <uchar.h>
 #include "disk.h"
 #include "deque.h"
 #include "utils.h"
@@ -26,7 +28,8 @@
 #define ATTR_LONG_NAME (ATTR_READ_ONLY | ATTR_HIDDEN | ATTR_SYSTEM | ATTR_VOLUME_ID)
 #define ATTR_LONG_NAME_MASK (ATTR_READ_ONLY | ATTR_HIDDEN | ATTR_SYSTEM | ATTR_VOLUME_ID | ATTR_DIRECTORY | ATTR_ARCHIVE)
 
-// #define BAD_CLUSTER (0x0FFFFFF7)
+// BAD_CLUSTER
+// #define BAD (0x0FFFFFF7)
 // #define EOC (0x0FFFFFFF)
 
 
@@ -102,17 +105,15 @@ struct long_directory_entry{
 
 struct entry{
     char *short_name;
-    wchar_t *long_name;
+    char *long_name;
     uint8_t attributes;
     uint32_t size;
     uint32_t first_cluster;
 };
 
 
-extern char16_t *name;
+extern char *name;
 extern uint32_t *fat;
-extern struct deque entries;
-extern struct deque clusters;
 extern struct BPB bpb;
 extern struct EBPB ebpb;
 extern struct short_directory_entry short_entry;
@@ -121,18 +122,20 @@ extern struct short_directory_entry short_entry;
 void read_BPB(FILE *);
 void read_EBPB(FILE *);
 void read_FAT(FILE *, int);
-void get_clusters(int);
-const char16_t *get_string_from_long_entry(struct long_directory_entry *);
-void make_entry(struct entry *, char *, wchar_t *);
-bool read_directory_entry(uint8_t **);
-void list_directory(int);
-char *make_short_name(wchar_t *);
+// void format(FILE *);
+struct deque *get_clusters(int);
+char *get_string_from_long_entry(const struct long_directory_entry *);
+bool read_directory_entry(uint8_t **, struct deque **);
+struct deque *get_entries(int);
+void delete_entries(struct deque *);
+char *make_short_name(const char *);
+void create_directory_entry();
 void print_volume_info();
 void print_BPB();
 void print_EBPB();
 void print_short_entry(const struct short_directory_entry *);
 void print_long_entry(const struct long_directory_entry *);
-void print_entries();
+void print_entries(const struct deque *);
 
 
 #endif

@@ -1,48 +1,34 @@
 #include "utils.h"
 
 
-wchar_t *convert_to_wide(const char16_t *str, size_t cnt){
-    wchar_t *result = malloc(sizeof(wchar_t) * (cnt+1));
-    for(size_t i=0; i<cnt; ++i) result[i] = (wchar_t) str[i];
-    result[cnt] = L'\0';
+char **tokenize(const char *string, const char *delimiter, size_t *number_of_tokens){
+    char *temp1 = malloc(sizeof(char) * (strlen(string)+1));
+    strcpy(temp1, string);
 
-    return result;
-}
-
-
-size_t utf16_strlen(const char16_t *str){
-    size_t length = 0;
-    while(str[length]) ++length;
-
-    return length;
-}
-
-
-wchar_t **tokenize(wchar_t *string, wchar_t *delimiter, size_t *number_of_tokens){
-    wchar_t *temp = malloc(sizeof(wchar_t) * (wcslen(string)+1));
-    wcscpy(temp, string);
-
-    wchar_t *token, *buffer;
+    char *token = strtok(temp1, delimiter);
     size_t cnt = 0;
-    token = wcstok(temp, delimiter, &buffer);
-    while(token) token = wcstok(NULL, delimiter, &buffer), cnt++;
-
-    free(temp);
-
-    temp = malloc(sizeof(wchar_t) * (wcslen(string)+1));
-    wcscpy(temp, string);
-
-    wchar_t **tokens = malloc(sizeof(wchar_t *) * cnt);
-    memset(tokens, 0, sizeof(wchar_t *) * cnt);
-    token = wcstok(temp, delimiter, &buffer);
-    for(size_t i=0; i<cnt; ++i){
-        tokens[i] = malloc(sizeof(wchar_t) * (wcslen(token)+1));
-        wcscpy(tokens[i], token);
-
-        token = wcstok(NULL, delimiter, &buffer);
+    while(token != NULL){
+        token = strtok(NULL, delimiter), cnt++;
     }
 
-    free(temp);
+    free(temp1);
+
+    char *temp2 = malloc(sizeof(char) * (strlen(string)+1));
+    strcpy(temp2, string);
+
+    char **tokens = malloc(sizeof(char *) * cnt);
+    memset(tokens, 0, sizeof(char *) * cnt);
+    token = strtok(temp2, delimiter);
+    for(size_t i=0; i<cnt; ++i){
+        assert(token != NULL);
+
+        tokens[i] = malloc(sizeof(char) * (strlen(token)+1));
+        strcpy(tokens[i], token);
+
+        token = strtok(NULL, delimiter);
+    }
+
+    free(temp2);
 
     *number_of_tokens = cnt;
 
@@ -50,49 +36,47 @@ wchar_t **tokenize(wchar_t *string, wchar_t *delimiter, size_t *number_of_tokens
 }
 
 
-void solve(wchar_t *path, struct deque *dq){
+void solve(const char *path, struct deque *dq){
     size_t path_number_of_tokens = 0;
-    wchar_t **path_tokens = tokenize(path, L"/", &path_number_of_tokens);
+    char **path_tokens = tokenize(path, "/", &path_number_of_tokens);
 
     for(size_t i=0; i<path_number_of_tokens; ++i){
-        wchar_t *token = path_tokens[i];
-        char *c_string = make_short_name(token);
+        char *token = path_tokens[i];
+        char *short_name = make_short_name(token);
 
-        // char *c_string = malloc(sizeof(char) * (wcslen(token)+1));
-        // for(size_t j=0; j<wcslen(token); ++j) c_string[j] = token[j];
-        // c_string[wcslen(token)] = '\0';
-
-        list_directory(get_back_deque(dq));
 
         bool flag = false;
-        for(size_t j=0; j<entries.count; ++j){
-            struct entry *e = (struct entry *) entries.data[j];
+        struct deque *entries = get_entries(get_back_deque(&dq));
+        for(size_t j=0; j<entries->count; ++j){
+            struct entry *e = (struct entry *) entries->data[j];
 
             if(!(e->attributes & ATTR_DIRECTORY)) continue;
 
-            if(e->long_name!=NULL && !wcscmp(e->long_name, token)){
+            if(e->long_name!=NULL && !strcmp(e->long_name, token)){
                 flag = true;
-                push_back_deque(dq, e->first_cluster);
+                push_back_deque(&dq, e->first_cluster);
 
                 break;
             }
-            else if(!strncmp(e->short_name, c_string, 11)){
+            else if(!strcmp(e->short_name, short_name)){
+            // else if(!strncmp(e->short_name, short_name, 11)){
                 flag = true;
 
-                if(!wcscmp(token, L".")){
+                if(!strcmp(token, ".")){
                 }
-                else if(!wcscmp(token, L"..")){
-                    pop_back_deque(dq);
+                else if(!strcmp(token, "..")){
+                    pop_back_deque(&dq);
                 }
                 else{
-                    push_back_deque(dq, e->first_cluster);
+                    push_back_deque(&dq, e->first_cluster);
                 }
 
                 break;
             }
         }
 
-        free(c_string);
+        free(short_name);
+        delete_entries(entries);
 
         assert(flag);
     }

@@ -1,10 +1,8 @@
 #include "fat32.h"
 
 
-char16_t *name;
+char *name;
 uint32_t *fat;
-struct deque entries;
-struct deque clusters;
 struct BPB bpb;
 struct EBPB ebpb;
 struct short_directory_entry short_entry;
@@ -41,57 +39,109 @@ void read_FAT(FILE *file, int idx){
 }
 
 
-void get_clusters(int cluster){
-    delete_deque(&clusters);
-    create_deque(&clusters, 0);
+// void format(FILE *file){
+//     struct BPB bpb;
+//     bpb.jump_code[0] = 0xEB;
+//     bpb.jump_code[1] = 0x3C;
+//     bpb.jump_code[2] = 0x90;
+//     memcpy(bpb.oem_name, "mkfs.fat", strlen("mkfs.fat"));
+//     bpb.bytes_per_sector = 512;
+//     bpb.sectors_per_cluster = 1;
+//     bpb.reserved_sectors = 32;
+//     bpb.number_of_fats = 2;
+//     bpb.root_entries = 0;
+//     bpb.total_sectors_16 = 0;
+//     bpb.media_descriptor = 0xF8;
+//     bpb.sectors_per_FAT16 = 0;
+//     bpb.sectors_per_track = 32;
+//     bpb.number_of_heads;
+//     bpb.hidden_sectors = 0;
+//     bpb.total_sectors_32;
+
+//     assert(bpb.bytes_per_sector*bpb.sectors_per_cluster <= 32*1024);
+//     assert(bpb.reserved_sectors);
+//     assert(bpb.number_of_fats == 2);
+//     assert(!bpb.root_entries);
+//     assert(!bpb.total_sectors_16);
+//     assert(!bpb.sectors_per_FAT16);
+//     assert(bpb.total_sectors_32);
+
+//     struct EBPB ebpb;
+//     // ebpb.sectors_per_FAT32 = ;
+//     ebpb.root_cluster = 2;
+//     ebpb.info_sector = 1;
+//     ebpb.backup_boot_sector = 6;
+//     for(int i=0; i<12; ++i) ebpb.reserved[i] = 0;
+//     // memset(ebpb.reserved, 0, 12);
+
+//     ebpb.vi.drive_number = 0x80;
+//     ebpb.vi.flags = 0;
+//     ebpb.vi.signature = 0x29;
+//     // ebpb.vi.volume_id;
+//     memcpy(ebpb.vi.volume_label, "NO NAME    ", strlen("NO NAME    "));
+//     memcpy(ebpb.vi.system_identifier, "FAT32   ", strlen("FAT32   "));
+
+//     ebpb.bootable_partition_signature = 0xAA55;
+// }
+
+
+struct deque *get_clusters(int cluster){
+    struct deque *dq = NULL;
+    create_deque(&dq, 0);
 
     while(cluster < 0x0FFFFFF8){
-        push_back_deque(&clusters, cluster);
+        push_back_deque(&dq, cluster);
         cluster = fat[cluster];
     }
+
+    return dq;
 }
 
 
-const char16_t *get_string_from_long_entry(struct long_directory_entry *entry){
-    uint8_t *ptr = (void *) entry;
-    size_t cnt = 0, indexes[] = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
-    for(size_t i=0; ptr[indexes[i]] && i<13; ++i) ++cnt;
+char *get_string_from_long_entry(const struct long_directory_entry *long_entry){
+    int indexes[] = {
+        1, 3, 5, 7, 9,
+        14, 16, 18, 20, 22, 24,
+        28, 30
+    };
 
-    // wprintf(L"name1: %ls\n", convert_to_wide(entry->name1, 5));
-    // wprintf(L"name2: %ls\n", convert_to_wide(entry->name2, 6));
-    // wprintf(L"name3: %ls\n", convert_to_wide(entry->name3, 2));
+    uint8_t *ptr = (void *) long_entry;
+    size_t cnt = 0;
+    for(int i=0; i<13 && *((char16_t *) (ptr+indexes[i])); ++i) ++cnt;
 
-    char16_t *str = malloc(sizeof(char16_t) * (cnt+1));
-    for(size_t i=0; i<cnt; ++i) str[i] = *((char16_t *) (ptr+indexes[i]));
-    str[cnt] = u'\0';
+    char16_t *s = malloc(sizeof(char16_t) * (cnt+1));
+    for(size_t i=0; i<cnt; ++i) s[i] = *((char16_t *) (ptr+indexes[i]));
+    s[cnt] = u'\0';
 
-    // wprintf(L"str: %ls\n", convert_to_wide(str, cnt));
+    char *result = malloc(sizeof(char) * 128);
+    memset(result, 0, 128);
 
-    return str;
-}
+    char *inbuf = (char *) s, *outbuf = result;
+    size_t inbytesleft = sizeof(char16_t) * (cnt+1), outbytesleft = 128;
 
-
-void make_entry(struct entry *e, char *sname, wchar_t *lname){
-    assert(sname != NULL);
-
-    char *temp1 = malloc(sizeof(char) * 12);
-    strncpy(temp1, sname, 11);
-    temp1[11] = '\0';
-
-    wchar_t *temp2 = NULL;
-    if(lname != NULL){
-        temp2 = malloc(sizeof(wchar_t) * (wcslen(lname)+1));
-        wcscpy(temp2, lname);
+    iconv_t cd = iconv_open("UTF-8", "UTF-16LE");
+    if(cd == (iconv_t) -1){
+        perror("iconv_open");
+        exit(EXIT_FAILURE);
     }
 
-    e->short_name = temp1;
-    e->long_name = temp2;
+    if(iconv(cd, &inbuf, &inbytesleft, &outbuf, &outbytesleft) == (size_t) -1){
+        perror("iconv");
+        exit(EXIT_FAILURE);
+    }
+
+    if(iconv_close(cd) == -1){
+        perror("iconv_close");
+        exit(EXIT_FAILURE);
+    }
+
+    free(s);
+
+    return result;
 }
 
 
-bool read_directory_entry(uint8_t **ptr){
-    assert((*ptr)-cluster_buffer < get_sector_size()*get_cluster_size());
-
+bool read_directory_entry(uint8_t **ptr, struct deque **clusters){
     if(**ptr == 0x00) return false;
     if(**ptr == 0xE5){
         *ptr += 32;
@@ -99,18 +149,24 @@ bool read_directory_entry(uint8_t **ptr){
         return true;
     }
 
-    // assert(**ptr & LAST_LONG_ENTRY);
+    free(name);
+    name = NULL;
 
-    struct long_directory_entry *entry = NULL;
+    size_t bytes_per_cluster = get_sector_size() * get_cluster_size();
 
-    struct deque dq;
+    assert(*ptr-cluster_buffer >= 0);
+    assert(*ptr-cluster_buffer < bytes_per_cluster);
+
+    struct deque *dq = NULL;
     create_deque(&dq, 0);
+
+    const struct long_directory_entry *entry = NULL;
     for(;;){
-        if(*ptr-cluster_buffer >= get_sector_size()*get_cluster_size()){
+        if(*ptr-cluster_buffer >= bytes_per_cluster){
             if((entry->order & LAST_LONG_ENTRY-1) == 1) break;
 
-            read_cluster(get_front_deque(&clusters));
-            pop_front_deque(&clusters);
+            read_cluster(get_front_deque(clusters));
+            pop_front_deque(clusters);
 
             *ptr = cluster_buffer;
         }
@@ -119,11 +175,10 @@ bool read_directory_entry(uint8_t **ptr){
 
         if(entry->attributes != ATTR_LONG_NAME) break;
 
-        // print_long_entry(entry);
-        // putwchar(L'\n');
+        char *s = get_string_from_long_entry(entry);
+        for(int i=strlen(s)-1; i>=0; --i) push_front_deque(&dq, s[i]);
 
-        const char16_t *s = get_string_from_long_entry(entry);
-        for(int i=utf16_strlen(s)-1; i>=0; --i) push_front_deque(&dq, s[i]);
+        free(s);
 
         *ptr += 32;
     }
@@ -132,17 +187,13 @@ bool read_directory_entry(uint8_t **ptr){
 
     if(!short_entry.first_cluster_high && !short_entry.first_cluster_low) short_entry.first_cluster_low = 2;
 
-    if(dq.count){
-        size_t length = dq.count;
-        name = malloc(sizeof(char16_t) * (dq.count+1));
-        for(size_t i=0; dq.count; ++i) name[i] = get_front_deque(&dq), pop_front_deque(&dq);
-        name[length] = u'\0';
-    }
-    else{
-        name = NULL;
+    if(dq->count){
+        name = malloc(sizeof(char) * (dq->count+1));
+        for(size_t i=0; i<dq->count; ++i) name[i] = dq->data[i];
+        name[dq->count] = '\0';
     }
 
-    // print_short_entry(&short_entry);
+    delete_deque(&dq);
 
     *ptr += 32;
 
@@ -150,25 +201,17 @@ bool read_directory_entry(uint8_t **ptr){
 }
 
 
-void list_directory(int cluster){
-    for(size_t i=0; i<entries.count; ++i){
-        struct entry *e = (struct entry *) entries.data[i];
-
-        free(e->short_name);
-        free(e->long_name);
-        free(e);
-    }
-
-    delete_deque(&entries);
+struct deque *get_entries(int cluster){
+    struct deque *clusters = get_clusters(cluster);
+    struct deque *entries = NULL;
     create_deque(&entries, 0);
 
-    get_clusters(cluster);
-    while(clusters.count){
+    while(clusters->count){
         read_cluster(get_front_deque(&clusters));
         pop_front_deque(&clusters);
 
         uint8_t *ptr = cluster_buffer;
-        while(read_directory_entry(&ptr)){
+        while(read_directory_entry(&ptr, &clusters)){
             if(*ptr == 0xE5) continue;
 
             struct entry *e = malloc(sizeof(struct entry));
@@ -176,37 +219,60 @@ void list_directory(int cluster){
             e->size = short_entry.size;
             e->first_cluster = (short_entry.first_cluster_high<<16) | short_entry.first_cluster_low;
 
-            if(name == NULL){
-                make_entry(e, short_entry.name, NULL);
-            }
-            else{
-                wchar_t *str = convert_to_wide(name, utf16_strlen(name));
+            char *temp1 = malloc(sizeof(char) * 12);
+            strncpy(temp1, short_entry.name, 11);
+            temp1[11] = '\0';
 
-                make_entry(e, short_entry.name, str);
+            e->short_name = temp1;
 
-                free(str);
+            if(name != NULL){
+                char *temp2 = malloc(sizeof(char) * (strlen(name)+1));
+                strcpy(temp2, name);
+                temp2[strlen(name)] = '\0';
+
+                e->long_name = temp2;
+
+                free(name);
+                name = NULL;
             }
 
             push_back_deque(&entries, (uint64_t) e);
-
-            // print_short_entry(&short_entry);
         }
     }
+
+    delete_deque(&clusters);
+
+    return entries;
 }
 
 
-char *make_short_name(wchar_t *s){
+void delete_entries(struct deque *entries){
+    assert(entries != NULL);
+
+    for(size_t i=0; i<entries->count; ++i){
+        struct entry *e = (struct entry *) entries->data[i];
+
+        free(e->short_name);
+        free(e->long_name);
+        free(e);
+    }
+
+    delete_deque(&entries);
+}
+
+
+char *make_short_name(const char *s){
     char *result = malloc(sizeof(char) * 12);
     memset(result, ' ', 11);
     result[11] = '\0';
 
-    if(!wcscmp(s, L".")){
+    if(!strcmp(s, ".")){
         result[0] = '.';
 
         return result;
     }
 
-    if(!wcscmp(s, L"..")){
+    if(!strcmp(s, "..")){
         result[0] = '.';
         result[1] = '.';
 
@@ -214,35 +280,26 @@ char *make_short_name(wchar_t *s){
     }
 
     size_t name_number_of_tokens = 0;
-    wchar_t **name_tokens = tokenize(s, L".", &name_number_of_tokens);
-
-    // wprintf(L":%ls\n", s);
-
-    // wprintf(L"%lu\n", name_number_of_tokens);
-    // for(size_t i=0; i<name_number_of_tokens; ++i){
-    //     wprintf(L"%ls\n", name_tokens[i]);
-    // }
+    char **name_tokens = tokenize(s, ".", &name_number_of_tokens);
 
     if(name_number_of_tokens!=1 && name_number_of_tokens!=2) return NULL;
-
     assert(name_number_of_tokens==1 || name_number_of_tokens==2);
 
     if(name_number_of_tokens == 1){
-        if(wcslen(name_tokens[0]) > 11) return NULL;
+        if(strlen(name_tokens[0]) >= 12) return NULL;
+        assert(strlen(name_tokens[0]) <= 11);
 
-        assert(wcslen(name_tokens[0]) < 12);
-
-        for(size_t i=0; i<wcslen(name_tokens[0]); ++i) result[i] = toupper(name_tokens[0][i]);
+        for(size_t i=0; i<strlen(name_tokens[0]); ++i) result[i] = toupper(name_tokens[0][i]);
     }
     else{
-        if(wcslen(name_tokens[0]) > 8) return NULL;
-        if(wcslen(name_tokens[1]) > 3) return NULL;
+        if(strlen(name_tokens[0]) >= 9) return NULL;
+        if(strlen(name_tokens[1]) >= 4) return NULL;
 
-        assert(wcslen(name_tokens[0]) < 9);
-        assert(wcslen(name_tokens[1]) < 4);
+        assert(strlen(name_tokens[0]) <= 8);
+        assert(strlen(name_tokens[1]) <= 3);
 
-        for(size_t i=0; i<wcslen(name_tokens[0]); ++i) result[i] = toupper(name_tokens[0][i]);
-        for(size_t i=0; i<wcslen(name_tokens[1]); ++i) result[i+8] = toupper(name_tokens[1][i]);
+        for(size_t i=0; i<strlen(name_tokens[0]); ++i) result[i] = toupper(name_tokens[0][i]);
+        for(size_t i=0; i<strlen(name_tokens[1]); ++i) result[i+8] = toupper(name_tokens[1][i]);
     }
 
     result[11] = '\0';
@@ -251,75 +308,91 @@ char *make_short_name(wchar_t *s){
 }
 
 
+void create_directory_entry(){
+}
+
+
 void print_volume_info(){
-    wprintf(L"Drive number: 0x%X\n", ebpb.vi.drive_number);
-    wprintf(L"Signature: 0x%X\n", ebpb.vi.signature);
-    // printf("Volume ID 'Serial' number:\n", vi->volume_id);
-    wprintf(L"Volume label string: %.11s\n", ebpb.vi.volume_label);
-    wprintf(L"System identifier string: %.8s\n", ebpb.vi.system_identifier);
+    printf("Drive number: 0x%X\n", ebpb.vi.drive_number);
+    printf("Flags: 0x%X\n", ebpb.vi.flags);
+    printf("Signature: 0x%X\n", ebpb.vi.signature);
+    printf("Volume ID 'Serial' number: 0x%X\n", ebpb.vi.volume_id);
+    printf("Volume label string: '%.11s'\n", ebpb.vi.volume_label);
+    printf("System identifier string: '%.8s'\n", ebpb.vi.system_identifier);
 }
 
 
 void print_BPB(){
-    wprintf(L"OEM identifier: %8s\n", bpb.oem_name);
-    wprintf(L"The number of bytes per sector: %hu\n", bpb.bytes_per_sector);
-    wprintf(L"Number of sectors per cluster: %hhu\n", bpb.sectors_per_cluster);
-    wprintf(L"Number of reserved sectors: %hu\n", bpb.reserved_sectors);
-    wprintf(L"Number of File Allocation Tables: %hhu\n", bpb.number_of_fats);
-    wprintf(L"Number of root directory entries: %hu\n", bpb.root_entries);
-    wprintf(L"The total sectors in the logical volume: %hu\n", bpb.total_sectors_16);
-    wprintf(L"The media descriptor type: 0x%X\n", bpb.media_descriptor);
-    wprintf(L"Number of sectors per FAT. FAT12/FAT16 only: %hu\n", bpb.sectors_per_FAT16);
-    wprintf(L"Number of sectors per track: %hu\n", bpb.sectors_per_track);
-    wprintf(L"Number of heads or sides on the storage media: %hu\n", bpb.number_of_heads);
-    wprintf(L"Number of hidden sectors: %u\n", bpb.hidden_sectors);
-    wprintf(L"Large sector count: %u\n", bpb.total_sectors_32);
+    printf("OEM identifier: %8s\n", bpb.oem_name);
+    printf("The number of bytes per sector: %hu\n", bpb.bytes_per_sector);
+    printf("Number of sectors per cluster: %hhu\n", bpb.sectors_per_cluster);
+    printf("Number of reserved sectors: %hu\n", bpb.reserved_sectors);
+    printf("Number of File Allocation Tables: %hhu\n", bpb.number_of_fats);
+    printf("Number of root directory entries: %hu\n", bpb.root_entries);
+    printf("The total sectors in the logical volume: %hu\n", bpb.total_sectors_16);
+    printf("The media descriptor type: 0x%X\n", bpb.media_descriptor);
+    printf("Number of sectors per FAT. FAT12/FAT16 only: %hu\n", bpb.sectors_per_FAT16);
+    printf("Number of sectors per track: %hu\n", bpb.sectors_per_track);
+    printf("Number of heads or sides on the storage media: %hu\n", bpb.number_of_heads);
+    printf("Number of hidden sectors: %u\n", bpb.hidden_sectors);
+    printf("Large sector count: %u\n", bpb.total_sectors_32);
 }
 
 
 void print_EBPB(){
-    wprintf(L"Sectors per FAT: %u\n", ebpb.sectors_per_FAT32);
-    wprintf(L"The cluster number of the root directory: %u\n", ebpb.root_cluster);
-    wprintf(L"The sector number of the FSInfo structure: %hu\n", ebpb.info_sector);
-    wprintf(L"The sector number of the backup boot sector: %hu\n", ebpb.backup_boot_sector);
-    wprintf(L"Bootable partition signature: 0x%X\n", ebpb.bootable_partition_signature);
+    printf("Sectors per FAT: %u\n", ebpb.sectors_per_FAT32);
+    printf("The cluster number of the root directory: %u\n", ebpb.root_cluster);
+    printf("The sector number of the FSInfo structure: %hu\n", ebpb.info_sector);
+    printf("The sector number of the backup boot sector: %hu\n", ebpb.backup_boot_sector);
+    printf("Bootable partition signature: 0x%X\n", ebpb.bootable_partition_signature);
 }
 
 
-void print_short_entry(const struct short_directory_entry *entry){
-    assert(entry->name[0] != 0x00);
-    assert(entry->name[0] != 0xE5);
+void print_short_entry(const struct short_directory_entry *short_entry){
+    assert(short_entry->name[0] != 0x00);
+    assert(short_entry->name[0] != 0xE5);
 
-    wprintf(L"name: %.11s\n", entry->name);
-    wprintf(L"attributes: %X\n", entry->attributes);
-    wprintf(L"first_cluster_high: %04X\n", entry->first_cluster_high);
-    wprintf(L"first_cluster_low: %04X\n", entry->first_cluster_low);
-    wprintf(L"size: %u\n", entry->size);
+    printf("name: %.11s\n", short_entry->name);
+    printf("attributes: %X\n", short_entry->attributes);
+    printf("first_cluster_high: %04X\n", short_entry->first_cluster_high);
+    printf("first_cluster_low: %04X\n", short_entry->first_cluster_low);
+    printf("size: %u\n", short_entry->size);
 }
 
 
-void print_long_entry(const struct long_directory_entry *entry){
-    wprintf(L"order: 0x%02X\n", entry->order);
-    wprintf(L"name1: %ls\n", convert_to_wide(entry->name1, 5));
-    wprintf(L"attributes: 0x%02X\n", entry->attributes);
-    wprintf(L"type: 0x%02X\n", entry->type);
-    wprintf(L"checksum: %d\n", entry->checksum);
-    wprintf(L"name2: %ls\n", convert_to_wide(entry->name2, 6));
-    wprintf(L"name3: %ls\n", convert_to_wide(entry->name3, 2));
+void print_long_entry(const struct long_directory_entry *long_entry){
+    assert(long_entry->attributes == ATTR_LONG_NAME);
+
+    printf("order: 0x%02X\n", long_entry->order);
+    printf("name1:");
+    for(int i=0; i<5; ++i) printf(" 0x%04X", long_entry->name1[i]);
+    putwchar(L'\n');
+    printf("attributes: 0x%02X\n", long_entry->attributes);
+    printf("type: 0x%02X\n", long_entry->type);
+    printf("checksum: %d\n", long_entry->checksum);
+    printf("name2:");
+    for(int i=0; i<6; ++i) printf(" 0x%04X", long_entry->name2[i]);
+    putwchar(L'\n');
+    printf("name3:");
+    for(int i=0; i<2; ++i) printf(" 0x%04X", long_entry->name3[i]);
+    putwchar(L'\n');
 }
 
 
-void print_entries(){
-    for(size_t i=0; i<entries.count; ++i){
-        const struct entry *e = (struct entry *) entries.data[i];
+void print_entries(const struct deque *entries){
+    assert(entries != NULL);
 
-        wprintf(L"%3hhu %10u %10u ", e->attributes, e->size, e->first_cluster);
+    printf("attributes | size | first_cluster |  short_name | long_name\n");
+    printf("-----------------------------------------------------------\n");
 
-        if(e->long_name == NULL){
-            wprintf(L"%.11s\n", e->short_name);
-        }
-        else{
-            wprintf(L"%ls\n", e->long_name);
-        }
+    for(size_t i=0; i<entries->count; ++i){
+        const struct entry *e = (struct entry *) entries->data[i];
+
+        printf("%10hhu | %4u | %13u | %s |", e->attributes, e->size, e->first_cluster, e->short_name);
+
+        if(e->long_name != NULL) printf(" %s", e->long_name);
+        else printf("NULL");
+
+        putchar('\n');
     }
 }
